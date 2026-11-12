@@ -1,0 +1,6 @@
+.pio/
+sdkconfig
+sdkconfig.old
+sdkconfig.waveshare_7b
+sdkconfig.waveshare_7b.old
+__pycache__/
