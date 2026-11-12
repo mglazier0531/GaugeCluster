@@ -144,6 +144,9 @@ for name,cx,cy,rx,ry,start,sweep in gauges:
                     if 0<=x<1024 and 0<=sy<600: highlights.append(sy*1024+x)
     highlight_ranges.append(len(highlights))
 background=background.crop((0,0,1024,570)).resize((1024,600),Image.Resampling.LANCZOS)
+engine_icon=background.crop((854,24,930,79))
+engine_icon.save(ROOT/'assets/check-engine-icon.png')
+ImageDraw.Draw(background).rectangle((852,23,930,79),fill='black')
 background.save(ROOT/'assets/dashboard-background.png')
 
 def array(f, name, data, ctype):
@@ -174,6 +177,7 @@ with (ROOT/'src/dashboard_assets.cpp').open('w') as f:
     array(f,'band_ranges',band_ranges,'uint32_t')
     array(f,'highlight_pixels',highlights,'uint32_t')
     array(f,'highlight_ranges',highlight_ranges,'uint32_t')
+    array(f,'engine_icon_pixels',[((r>>3)<<11)|((g>>2)<<5)|(b>>3) for r,g,b in engine_icon.get_flattened_data()],'uint16_t')
 with (ROOT/'include/dashboard_assets.h').open('w') as f:
     f.write('#pragma once\n#include <stdint.h>\n')
     f.write('extern const uint16_t dashboard_background[];\nextern const uint8_t font_alpha[], font_widths[];\n')
@@ -182,6 +186,7 @@ with (ROOT/'include/dashboard_assets.h').open('w') as f:
     f.write('extern const BandPixel band_pixels[];\nextern const uint32_t band_ranges[];\n')
     f.write('constexpr float dashboard_y_scale = 600.0f / 570.0f;\n')
     f.write('extern const uint32_t highlight_pixels[], highlight_ranges[];\n')
+    f.write('extern const uint16_t engine_icon_pixels[];\nconstexpr int engine_icon_x=854,engine_icon_y=24,engine_icon_width=76,engine_icon_height=55;\n')
 print('Generated 1024x600 background and font atlas')
 
 preview = background.copy()

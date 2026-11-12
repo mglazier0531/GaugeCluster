@@ -9,6 +9,7 @@
 #include "gauge_limits.h"
 #include "selectable_assets.h"
 #include "hidden_alerts.h"
+#include "ecu_faults.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -20,6 +21,7 @@ static esp_lcd_panel_handle_t panel;
 static SemaphoreHandle_t vsync;
 static DisplaySettings settings;
 static HiddenAlerts hidden_alerts;
+static EcuFaults ecu_faults;
 static uint16_t *day_background,*night_background,*night_palette;
 struct CustomTrack { BandPixel* pixels=nullptr; unsigned count=0; uint32_t* outline=nullptr; unsigned outline_count=0; };
 static CustomTrack custom_tracks[5];
@@ -295,6 +297,37 @@ static void hidden_alert_popup(const float (&values)[gauge_count]) {
     rounded_rect(329,447,695,487,8,0x1082);
     ui_text("ACKNOWLEDGE",512,467,25,335);
 }
+static void ecu_demo(float t) {
+    float cycle=fmodf(t,84.0f);
+    uint16_t status1=0,status2=0;
+    if(cycle<4) status1=0x0400; // Preheat is not an ECU fault.
+    else if(cycle>=12 && cycle<36) status1=0x0003;
+    else if(cycle>=44 && cycle<56) status1=0x0001;
+    else if(cycle>=56 && cycle<80) { status1=0x0221; status2=0x0004; }
+    uint8_t packet[26]={}; packet[0]=ecu_faults.engine_instance;
+    packet[20]=status1&255; packet[21]=status1>>8;
+    packet[22]=status2&255; packet[23]=status2>>8;
+    // Use the receive adapter, not gauge values, to drive the check-engine state.
+    ecu_faults.receive_127489(packet,sizeof(packet),255,true);
+}
+static void engine_fault_popup() {
+    const auto* fault=ecu_faults.fault_at(ecu_faults.page);
+    if(!fault) return;
+    rounded_rect(220,110,804,500,18,0xffe0);
+    rounded_rect(224,114,800,496,14,0x0862);
+    ui_text("ENGINE FAULTS",480,143,31,445,0xffe0);
+    rounded_rect(726,122,780,170,10,0x2104); ui_text("X",753,145,28,40);
+    char label[64]; snprintf(label,sizeof(label),"ENGINE %u - FAULT %u OF %u",ecu_faults.engine_instance+1,ecu_faults.page+1,ecu_faults.count());
+    ui_text(label,512,191,19,530);
+    ui_text(fault->title,512,243,29,540,0xffe0);
+    ui_text(fault->meaning,512,294,22,540);
+    ui_text(fault->detail,512,329,20,540);
+    ui_text(ecu_faults.simulated?"SIMULATED ECU DATA":"REPORTED BY ENGINE ECU",512,382,17,530);
+    rounded_rect(250,435,408,482,9,ecu_faults.page?0xffe0:0x4208);
+    rounded_rect(252,437,406,480,7,0x1082); ui_text("PREV",329,459,23,135);
+    rounded_rect(616,435,774,482,9,ecu_faults.page+1<ecu_faults.count()?0xffe0:0x4208);
+    rounded_rect(618,437,772,480,7,0x1082); ui_text("NEXT",695,459,23,135);
+}
 static EngineData demo(float t) {
     float wave=0.5f-0.5f*cosf(t*0.28f);
     EngineData data={800+4200*wave,176+6*sinf(t*.12f),30+35*wave,
@@ -355,6 +388,9 @@ static void render(const EngineData& d) {
     snprintf(s,sizeof(s),"%.1f MPH",d.speed); text(s,760,48,42,160,true);
     snprintf(s,sizeof(s),"%.1f h",d.hours); text(s,243,515,35,142);
     snprintf(s,sizeof(s),"%.1f GPH",d.flow); text(s,554,515,35,150);
+    restore_physical(852,23,931,80);
+    if(ecu_faults.lamp()) for(int y=0;y<engine_icon_height;y++) for(int x=0;x<engine_icon_width;x++)
+        pixel(engine_icon_x+x,engine_icon_y+y,themed(engine_icon_pixels[y*engine_icon_width+x]));
 }
 extern "C" void app_main() {
     printf("GaugeCluster: 1024x600 ANIMATED DEMO; NMEA2000 disabled\n");
@@ -381,10 +417,37 @@ extern "C" void app_main() {
     Alert previous_alerts[gauge_count]={};
     bool trim_interlock_logged=false;
     bool alarm_touch_capture=false,alarm_pressed=false;
+    bool input_pressed=false,ecu_touch_capture=false;
+    uint16_t previous_ecu1=0xffff,previous_ecu2=0xffff;
     for(unsigned n=0;;n++) {
         TouchSample touch;
         unsigned changes=0;
+        bool ecu_was_open=ecu_faults.open;
+        ecu_demo(esp_timer_get_time()/1000000.0f);
+        if(ecu_faults.status1!=previous_ecu1 || ecu_faults.status2!=previous_ecu2) {
+            ESP_LOGI("ecu","SIMULATED lamp=%s status1=0x%04x status2=0x%04x faults=%u",ecu_faults.lamp()?"ON":"OFF",ecu_faults.status1,ecu_faults.status2,ecu_faults.count());
+            previous_ecu1=ecu_faults.status1; previous_ecu2=ecu_faults.status2;
+        }
         while(touch_input_next(touch)) {
+            bool tap=touch.down && !input_pressed; input_pressed=touch.down;
+            if(tap && ecu_faults.lamp() && DisplaySettings::inside(touch.x,touch.y,852,18,931,84)) {
+                ecu_faults.open=!ecu_faults.open; ecu_faults.page=0; ecu_touch_capture=true;
+                if(settings.dragging && settings.dirty) save_settings();
+                settings.dragging=false; settings.dirty=false;
+                ESP_LOGI("ecu","POPUP %s",ecu_faults.open?"OPEN":"CLOSED");
+            }
+            if(ecu_faults.open || ecu_touch_capture || ecu_was_open) {
+                ecu_touch_capture=touch.down;
+                if(tap && DisplaySettings::inside(touch.x,touch.y,726,122,780,170)) {
+                    ecu_faults.open=false; ESP_LOGI("ecu","POPUP CLOSED");
+                } else if(tap && DisplaySettings::inside(touch.x,touch.y,250,435,408,482) && ecu_faults.page>0) {
+                    ecu_faults.page--; ESP_LOGI("ecu","PAGE %u",ecu_faults.page+1);
+                } else if(tap && DisplaySettings::inside(touch.x,touch.y,616,435,774,482) && ecu_faults.page+1<ecu_faults.count()) {
+                    ecu_faults.page++; ESP_LOGI("ecu","PAGE %u",ecu_faults.page+1);
+                }
+                if(!touch.down) { settings.pressed=false; alarm_pressed=false; alarm_touch_capture=false; }
+                continue;
+            }
             if(hidden_alerts.open || alarm_touch_capture) {
                 bool tap=touch.down && !alarm_pressed;
                 alarm_pressed=touch.down; alarm_touch_capture=touch.down;
@@ -427,12 +490,13 @@ extern "C" void app_main() {
             if(settings.dragging && settings.dirty) save_settings();
             settings.dragging=false; settings.dirty=false;
         }
-        unsigned overlay=hidden_alerts.open?3:(settings.open?1:(settings.chooser_slot>=0?2:0));
+        unsigned overlay=ecu_faults.open?4:(hidden_alerts.open?3:(settings.open?1:(settings.chooser_slot>=0?2:0)));
         if(previous_overlay[index]!=overlay || previous_night[index]!=settings.night || previous_composition[index]!=composition_revision)
             memcpy(frame,background,1024*600*2);
         previous_overlay[index]=overlay; previous_night[index]=settings.night; previous_composition[index]=composition_revision;
         render(data);
-        if(hidden_alerts.open) hidden_alert_popup(values);
+        if(ecu_faults.open) engine_fault_popup();
+        else if(hidden_alerts.open) hidden_alert_popup(values);
         else if(settings.open) settings_popup();
         else if(settings.chooser_slot>=0) gauge_picker();
         xSemaphoreTake(vsync,0);

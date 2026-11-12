@@ -1,6 +1,7 @@
 """Build reusable gauge faces and sparse animated tracks from both references."""
 from PIL import Image, ImageDraw, ImageFont
 import math
+import re
 
 SIZE=320
 CATALOG=[
@@ -150,6 +151,7 @@ def generate_selectable_assets(root,night_image):
     picker.save(root/'assets/gauge-picker-preview.png')
     print(f'Generated ten reusable gauge faces and {len(pixels)} animated track pixels')
     generate_hidden_alert_previews(root)
+    generate_ecu_previews(root)
 
 def generate_hidden_alert_previews(root):
     base=Image.open(root/'assets/dashboard-preview.png').convert('RGB')
@@ -172,3 +174,28 @@ def generate_hidden_alert_previews(root):
         frame.save(root/f'assets/hidden-alert-{"on" if flash else "off"}.png')
         frames.append(frame)
     frames[0].save(root/'assets/hidden-alert-preview.gif',save_all=True,append_images=frames[1:],duration=500,loop=0)
+
+def generate_ecu_previews(root):
+    healthy=Image.open(root/'assets/dashboard-preview.png').convert('RGB')
+    healthy.save(root/'assets/ecu-healthy-preview.png')
+    active=healthy.copy(); active.paste(Image.open(root/'assets/check-engine-icon.png'),(854,24))
+    active.save(root/'assets/ecu-active-preview.png')
+    source=(root/'include/ecu_faults.h').read_text()
+    definitions=re.findall(r'\{[12],0x[0-9a-f]+,"([^"]+)","([^"]+)","([^"]+)"\}',source)
+    for index,label in [(1,'overheat'),(0,'unspecified')]:
+        popup=active.copy(); d=ImageDraw.Draw(popup)
+        d.rounded_rectangle((220,110,803,499),18,fill=(255,255,0))
+        d.rounded_rectangle((224,114,799,495),14,fill=(8,12,16))
+        fit_text(d,(480,143),'ENGINE FAULTS',31,445,(255,255,0))
+        d.rounded_rectangle((726,122,779,169),10,fill=(33,32,33)); fit_text(d,(753,145),'X',28,40)
+        fit_text(d,(512,191),'ENGINE 1 - FAULT 1 OF 1',19,530)
+        title,meaning,detail=definitions[index]
+        fit_text(d,(512,243),title,29,540,(255,255,0))
+        fit_text(d,(512,294),meaning,22,540)
+        fit_text(d,(512,329),detail,20,540)
+        fit_text(d,(512,382),'SIMULATED ECU DATA',17,530)
+        for x,title in [(250,'PREV'),(616,'NEXT')]:
+            d.rounded_rectangle((x,435,x+157,481),9,fill=(66,65,66))
+            d.rounded_rectangle((x+2,437,x+155,479),7,fill=(16,16,16))
+            fit_text(d,(x+79,459),title,23,135)
+        popup.save(root/f'assets/ecu-{label}-preview.png')
