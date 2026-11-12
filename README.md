@@ -4,7 +4,9 @@ Animated dashboard prototype for the **Waveshare ESP32-S3-Touch-LCD-7B / ESP32-S
 
 ![Dashboard composition](assets/dashboard-preview.png)
 
-The main reference is `reference/High-Contrast Cyan Automotive Dashboard UI.png`. Its metallic gauge faces, icons, ticks, and bars are retained as a background asset, with independently rendered animated numeric readouts and moving cyan markers. The second image is reserved for future selectable gauges. This first version is a visual demo: all engine readings are simulated, navigation and status icons are reference artwork, touch/settings are not implemented, and no NMEA 2000 traffic is read or transmitted. The fixed cyan bands are part of the artwork; moving cyan dots indicate changing readings. A DEMO label is shown beneath the dashboard.
+The main reference is `reference/High-Contrast Cyan Automotive Dashboard UI.png`. Its metallic gauge faces, icons, and ticks are retained as a background asset. Numeric readouts and colored bands are rendered from the same engine values: RPM 0–7000, temperature 100–260 F, oil pressure 0–100 PSI, fuel 0–100%, and voltage 10–16 V. The bands fill and drain with the values; unfilled sections are dark and red warning sections brighten only when reached. White ticks and chrome remain visible. Temperature, oil, and voltage use measured tick positions from the artwork, including its nonuniform temperature scale. The generator also saves empty, half, and full band previews in `assets/` for visual verification.
+
+The second image is reserved for future selectable gauges. This version is a visual demo: all engine readings are simulated, navigation and status icons are reference artwork, touch/settings are not implemented, and no NMEA 2000 traffic is read or transmitted. A DEMO label is shown beneath the dashboard.
 
 ## Build and flash
 

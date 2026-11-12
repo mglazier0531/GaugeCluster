@@ -10,8 +10,6 @@
 // Rendering is independent of the source of engine data. NMEA 2000 comes next.
 struct EngineData { float rpm, temperature, oil, fuel, voltage, speed, hours, flow; };
 static uint16_t *frame;
-static unsigned buffer_index, marker_index;
-static int old_markers[2][4][2] = {};
 static esp_lcd_panel_handle_t panel;
 static SemaphoreHandle_t vsync;
 static bool IRAM_ATTR on_vsync(esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_event_data_t*, void*) {
@@ -53,13 +51,12 @@ static void text(const char* str,int cx,int top,int height,int maxwidth) {
         left+=int(font_widths[index]*scale);
     }
 }
-static void indicator(float cx,float cy,float radius,float fraction) {
-    float angle=(145+250*fminf(1,fmaxf(0,fraction)))*3.14159265f/180;
-    int x=int(cx+radius*cosf(angle)), y=int(cy+radius*sinf(angle));
-    old_markers[buffer_index][marker_index][0]=x;
-    old_markers[buffer_index][marker_index++][1]=y;
-    for(int dy=-4;dy<=4;dy++) for(int dx=-4;dx<=4;dx++)
-        if(dx*dx+dy*dy<=16) pixel(x+dx,y+dy,0x07ff);
+static void band(unsigned gauge,float fraction) {
+    unsigned cutoff=unsigned(lroundf(65535*fminf(1,fmaxf(0,fraction))));
+    for(unsigned i=band_ranges[gauge];i<band_ranges[gauge+1];i++) {
+        const auto& p=band_pixels[i];
+        frame[p.offset]=(cutoff>0 && p.threshold<=cutoff)?p.active:p.inactive;
+    }
 }
 static EngineData demo(float t) {
     float wave=0.5f-0.5f*cosf(t*0.28f);
@@ -73,8 +70,6 @@ static void render(const EngineData& d) {
         {780,168,910,222},{775,382,914,434},{676,21,848,76},
         {169,515,321,558},{474,515,635,558}};
     for(auto& a:areas) restore(a[0],a[1],a[2],a[3]);
-    for(auto& p:old_markers[buffer_index]) restore(p[0]-5,p[1]-5,p[0]+6,p[1]+6);
-    marker_index=0;
     char s[40];
     snprintf(s,sizeof(s),"%d,%03d",int(d.rpm)/1000,int(d.rpm)%1000); text(s,511,250,76,226);
     snprintf(s,sizeof(s),"%.0f",d.temperature); text(s,175,186,43,80); text("F",224,194,24,20);
@@ -84,10 +79,11 @@ static void render(const EngineData& d) {
     snprintf(s,sizeof(s),"%.1f MPH",d.speed); text(s,760,21,42,160);
     snprintf(s,sizeof(s),"%.1f h",d.hours); text(s,243,515,35,142);
     snprintf(s,sizeof(s),"%.1f GPH",d.flow); text(s,554,515,35,150);
-    indicator(506,290,157,d.rpm/7000);
-    indicator(182,190,90,(d.temperature-100)/160);
-    indicator(183,397,90,d.oil/100);
-    indicator(840,397,90,(d.voltage-10)/6);
+    band(0,d.rpm/7000);
+    band(1,(d.temperature-100)/160);
+    band(2,d.oil/100);
+    band(3,d.fuel/100);
+    band(4,(d.voltage-10)/6);
     text("DEMO",512,571,14,80);
 }
 extern "C" void app_main() {
@@ -106,7 +102,6 @@ extern "C" void app_main() {
     bool next=false;
     for(unsigned n=0;;n++) {
         frame=next?buffers1:buffers0;
-        buffer_index=next?1:0;
         render(demo(esp_timer_get_time()/1000000.0f));
         xSemaphoreTake(vsync,0);
         ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,1024,600,frame));
