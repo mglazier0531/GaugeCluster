@@ -104,7 +104,7 @@ def array(f, name, data, ctype):
         f.write(','.join(str(v) for v in data[i:i+24])+',\n')
     f.write('};\n')
 
-chars = '0123456789.,%FVP SIGAMHhDEMO'
+chars = '0123456789.,%ABCDEFGHIJKLMNOPQRSTUVWXYZ /-h'
 chars = ''.join(dict.fromkeys(chars))
 font = ImageFont.truetype('C:/Windows/Fonts/arialbi.ttf', 100)
 atlas = Image.new('L',(96*len(chars),120))
@@ -150,10 +150,12 @@ readouts = [('3,450',511,250,76,226),('176',175,186,43,80),('F',224,194,24,20),
     ('58',171,382,43,70),('PSI',216,397,21,40),('72%',841,168,45,114),
     ('13.8',829,382,43,99),('V',889,399,24,24),('32.4 MPH',760,21,42,160),
     ('487.6 h',243,515,35,142),('12.4 GPH',554,515,35,150)]
-for value,cx,top,height,maxwidth in readouts:
+def draw_value(target,value,cx,top,height,maxwidth,center=False):
     width=sum(widths[chars.index(c)] for c in value)
     factor=min(height/100,maxwidth/width)
-    if value.endswith('MPH'):
+    if center:
+        top-=int(55.5*factor)
+    elif value.endswith('MPH'):
         top=48-int(55.5*factor)
     left=cx-int(width*factor)//2
     for ch in value:
@@ -163,7 +165,46 @@ for value,cx,top,height,maxwidth in readouts:
                 a=atlas.getpixel((index*96+int(x/factor),int(y/(factor*Y_SCALE))))
                 dx,dy=left+x,int(top*Y_SCALE)+y
                 if a and 0<=dx<1024 and 0<=dy<600:
-                    bg=preview.getpixel((dx,dy))
-                    preview.putpixel((dx,dy),tuple((v*(255-a)+255*a)//255 for v in bg))
+                    bg=target.getpixel((dx,dy))
+                    target.putpixel((dx,dy),tuple((v*(255-a)+255*a)//255 for v in bg))
         left+=int(widths[index]*factor)
+for value,cx,top,height,maxwidth in readouts:
+    draw_value(preview,value,cx,top,height,maxwidth)
 preview.save(ROOT/'assets/dashboard-preview.png')
+
+def night_color(c):
+    r,g,b=c
+    r,g,b=(r>>3)*255//31,(g>>2)*255//63,(b>>3)*255//31
+    light=(r*30+g*59+b*11)//100
+    nr,ng,nb=light*3//4,light//5,light//32
+    if r>g*2 and r>b*2: nr,ng,nb=r*3//4,g//6,0
+    return ((nr>>3)*255//31,(ng>>2)*255//63,(nb>>3)*255//31)
+
+def night_image(source):
+    target=Image.new('RGB',source.size)
+    target.putdata([night_color(c) for c in source.get_flattened_data()])
+    return target
+
+night_image(preview).save(ROOT/'assets/dashboard-night-preview.png')
+for night,brightness in [(False,100),(True,25)]:
+    popup=preview.copy()
+    d=ImageDraw.Draw(popup)
+    d.rounded_rectangle((236,130,787,479),18,fill=(0,255,255))
+    d.rounded_rectangle((239,133,784,476),15,fill=(8,12,16))
+    d.rounded_rectangle((725,145,776,194),10,fill=(33,32,33))
+    d.rounded_rectangle((310,274,713,285),6,fill=(57,56,57))
+    knob=310+(brightness-5)*404//95
+    if knob>310: d.rounded_rectangle((310,274,knob,285),6,fill=(0,255,255))
+    d.rounded_rectangle((knob-17,263,knob+17,297),17,fill='white')
+    d.rounded_rectangle((knob-10,270,knob+10,290),10,fill=(0,255,255))
+    d.rounded_rectangle((290,345,733,414),12,fill=(192,124,0) if night else (0,255,255))
+    d.rounded_rectangle((292,347,731,412),10,fill=(16,16,16))
+    for value,cx,cy,height,maxwidth in [
+        ('DISPLAY SETTINGS',474,171,29,380),('X',750,170,29,40),
+        ('BACKLIGHT',391,225,25,230),(f'{brightness}%',686,225,29,95),
+        ('5%',310,320,16,80),('100%',714,320,16,80),
+        ('NIGHT MODE  ON' if night else 'NIGHT MODE  OFF',512,380,28,405),
+        ('DAY AND NIGHT BRIGHTNESS SAVED',512,448,17,500)]:
+        draw_value(popup,value,cx,int(cy/Y_SCALE),height,maxwidth,True)
+    if night: popup=night_image(popup)
+    popup.save(ROOT/f'assets/settings-{"night" if night else "day"}-preview.png')

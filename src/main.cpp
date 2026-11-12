@@ -3,6 +3,9 @@
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "freertos/semphr.h"
+#include "touch_input.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -12,6 +15,55 @@ struct EngineData { float rpm, temperature, oil, fuel, voltage, speed, hours, fl
 static uint16_t *frame;
 static esp_lcd_panel_handle_t panel;
 static SemaphoreHandle_t vsync;
+static DisplaySettings settings;
+static uint16_t *night_background,*night_palette;
+static const uint16_t* background=dashboard_background;
+static uint16_t themed(uint16_t color) { return settings.night?night_palette[color]:color; }
+static void prepare_night_palette() {
+    night_palette=static_cast<uint16_t*>(heap_caps_malloc(65536*2,MALLOC_CAP_SPIRAM));
+    night_background=static_cast<uint16_t*>(heap_caps_malloc(1024*600*2,MALLOC_CAP_SPIRAM));
+    assert(night_palette && night_background);
+    for(unsigned c=0;c<65536;c++) {
+        unsigned r=((c>>11)&31)*255/31,g=((c>>5)&63)*255/63,b=(c&31)*255/31;
+        unsigned l=(r*30+g*59+b*11)/100;
+        unsigned nr=l*3/4,ng=l/5,nb=l/32;
+        if(r>g*2 && r>b*2) { nr=r*3/4; ng=g/6; nb=0; }
+        night_palette[c]=((nr>>3)<<11)|((ng>>2)<<5)|(nb>>3);
+    }
+    for(unsigned i=0;i<1024*600;i++) night_background[i]=night_palette[dashboard_background[i]];
+}
+static void load_settings() {
+    esp_err_t err=nvs_flash_init();
+    if(err==ESP_ERR_NVS_NO_FREE_PAGES || err==ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase()); err=nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+    nvs_handle_t nvs;
+    if(nvs_open("display",NVS_READONLY,&nvs)==ESP_OK) {
+        int32_t value;
+        if(nvs_get_i32(nvs,"day",&value)==ESP_OK && value>=5 && value<=100) settings.day_brightness=value;
+        if(nvs_get_i32(nvs,"night_level",&value)==ESP_OK && value>=5 && value<=100) settings.night_brightness=value;
+        uint8_t night=0;
+        if(nvs_get_u8(nvs,"night",&night)==ESP_OK) settings.night=night==1;
+        nvs_close(nvs);
+    }
+}
+static void save_settings() {
+    nvs_handle_t nvs;
+    esp_err_t err=nvs_open("display",NVS_READWRITE,&nvs);
+    if(err==ESP_OK) {
+        err=nvs_set_i32(nvs,"day",settings.day_brightness);
+        if(err==ESP_OK) err=nvs_set_i32(nvs,"night_level",settings.night_brightness);
+        if(err==ESP_OK) err=nvs_set_u8(nvs,"night",settings.night);
+        if(err==ESP_OK) err=nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    if(err!=ESP_OK) ESP_LOGE("settings","Save failed: %s",esp_err_to_name(err));
+}
+static void set_backlight() {
+    IO_EXTENSION_Pwm_Output(100-settings.brightness());
+    ESP_LOGI("settings","%s mode, backlight %d%%",settings.night?"Night":"Day",settings.brightness());
+}
 static bool IRAM_ATTR on_vsync(esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_event_data_t*, void*) {
     BaseType_t wake = pdFALSE;
     xSemaphoreGiveFromISR(vsync, &wake);
@@ -25,10 +77,11 @@ static void restore(int x0,int y0,int x1,int y1) {
     for(int y=y0;y<y1;y++) {
         if(y<0 || y>=600) continue;
         int left=x0<0?0:x0, right=x1>1024?1024:x1;
-        if(right>left) memcpy(frame+y*1024+left,dashboard_background+y*1024+left,(right-left)*2);
+        if(right>left) memcpy(frame+y*1024+left,background+y*1024+left,(right-left)*2);
     }
 }
 static void text(const char* str,int cx,int top,int height,int maxwidth,bool center_vertical=false) {
+    uint16_t ink=themed(0xffff);
     float scale=height/100.0f;
     int sum=0;
     for(const char* p=str;*p;p++) { const char* q=strchr(font_chars,*p); if(q) sum+=font_widths[q-font_chars]; }
@@ -47,9 +100,9 @@ static void text(const char* str,int cx,int top,int height,int maxwidth,bool cen
             int dx=left+x,dy=int(top*dashboard_y_scale)+y;
             if(!a || dx<0 || dx>=1024 || dy<0 || dy>=600) continue;
             uint16_t bg=frame[dy*1024+dx];
-            unsigned r=(((bg>>11)&31)*(255-a)+31*a)/255;
-            unsigned g=(((bg>>5)&63)*(255-a)+63*a)/255;
-            unsigned b=((bg&31)*(255-a)+31*a)/255;
+            unsigned r=(((bg>>11)&31)*(255-a)+((ink>>11)&31)*a)/255;
+            unsigned g=(((bg>>5)&63)*(255-a)+((ink>>5)&63)*a)/255;
+            unsigned b=((bg&31)*(255-a)+(ink&31)*a)/255;
             pixel(dx,dy,(r<<11)|(g<<5)|b);
         }
         left+=int(font_widths[index]*scale);
@@ -59,8 +112,39 @@ static void band(unsigned gauge,float fraction) {
     unsigned cutoff=unsigned(lroundf(65535*fminf(1,fmaxf(0,fraction))));
     for(unsigned i=band_ranges[gauge];i<band_ranges[gauge+1];i++) {
         const auto& p=band_pixels[i];
-        frame[p.offset]=(cutoff>0 && p.threshold<=cutoff)?p.active:p.inactive;
+        frame[p.offset]=themed((cutoff>0 && p.threshold<=cutoff)?p.active:p.inactive);
     }
+}
+static void rounded_rect(int l,int t,int r,int b,int radius,uint16_t color) {
+    color=themed(color);
+    for(int y=t;y<b;y++) for(int x=l;x<r;x++) {
+        int dx=x<l+radius?l+radius-x:(x>=r-radius?x-(r-radius-1):0);
+        int dy=y<t+radius?t+radius-y:(y>=b-radius?y-(b-radius-1):0);
+        if(dx*dx+dy*dy<=radius*radius) pixel(x,y,color);
+    }
+}
+static void ui_text(const char* value,int cx,int center_y,int height,int maxwidth) {
+    text(value,cx,int(center_y/dashboard_y_scale),height,maxwidth,true);
+}
+static void settings_popup() {
+    rounded_rect(236,130,788,480,18,0x07ff);
+    rounded_rect(239,133,785,477,15,0x0862);
+    ui_text("DISPLAY SETTINGS",474,171,29,380);
+    rounded_rect(725,145,777,195,10,0x2104);
+    ui_text("X",750,170,29,40);
+    ui_text("BACKLIGHT",391,225,25,230);
+    char value[12]; snprintf(value,sizeof(value),"%d%%",settings.brightness());
+    ui_text(value,686,225,29,95);
+    rounded_rect(310,274,714,286,6,0x39c7);
+    int knob=310+(settings.brightness()-5)*404/95;
+    if(knob>310) rounded_rect(310,274,knob+1,286,6,0x07ff);
+    rounded_rect(knob-17,263,knob+18,298,17,0xffff);
+    rounded_rect(knob-10,270,knob+11,291,10,0x07ff);
+    ui_text("5%",310,320,16,80); ui_text("100%",714,320,16,80);
+    rounded_rect(290,345,734,415,12,settings.night?0xc3e0:0x07ff);
+    rounded_rect(292,347,732,413,10,0x1082);
+    ui_text(settings.night?"NIGHT MODE  ON":"NIGHT MODE  OFF",512,380,28,405);
+    ui_text("DAY AND NIGHT BRIGHTNESS SAVED",512,448,17,500);
 }
 static EngineData demo(float t) {
     float wave=0.5f-0.5f*cosf(t*0.28f);
@@ -94,21 +178,37 @@ static void render(const EngineData& d) {
 }
 extern "C" void app_main() {
     printf("GaugeCluster: 1024x600 ANIMATED DEMO; NMEA2000 disabled\n");
-    DEV_I2C_Init(); IO_EXTENSION_Init();
+    load_settings(); prepare_night_palette();
+    background=settings.night?night_background:dashboard_background;
+    DEV_I2C_Port port=DEV_I2C_Init(); IO_EXTENSION_Init();
     IO_EXTENSION_Output(IO_EXTENSION_IO_2,0);
     IO_EXTENSION_Output(IO_EXTENSION_IO_6,1);
+    touch_input_init(port.bus);
+    set_backlight();
     panel=waveshare_esp32_s3_rgb_lcd_init();
     vsync=xSemaphoreCreateBinary();
     esp_lcd_rgb_panel_event_callbacks_t cb={}; cb.on_vsync=on_vsync;
     ESP_ERROR_CHECK(esp_lcd_rgb_panel_register_event_callbacks(panel,&cb,nullptr));
     void *a,*b; waveshare_get_frame_buffer(&a,&b);
     auto *buffers0=static_cast<uint16_t*>(a); auto *buffers1=static_cast<uint16_t*>(b);
-    memcpy(buffers0,dashboard_background,1024*600*2);
-    memcpy(buffers1,dashboard_background,1024*600*2);
+    memcpy(buffers0,background,1024*600*2);
+    memcpy(buffers1,background,1024*600*2);
+    bool previous_open[2]={false,false},previous_night[2]={settings.night,settings.night};
     bool next=false;
     for(unsigned n=0;;n++) {
+        TouchSample touch;
+        unsigned changes=0;
+        while(touch_input_next(touch)) changes|=settings.touch(touch);
+        if(changes&DisplaySettings::Backlight) set_backlight();
+        if(changes&DisplaySettings::Save) save_settings();
+        background=settings.night?night_background:dashboard_background;
         frame=next?buffers1:buffers0;
+        unsigned index=next?1:0;
+        if((previous_open[index] && !settings.open) || previous_night[index]!=settings.night)
+            memcpy(frame,background,1024*600*2);
+        previous_open[index]=settings.open; previous_night[index]=settings.night;
         render(demo(esp_timer_get_time()/1000000.0f));
+        if(settings.open) settings_popup();
         xSemaphoreTake(vsync,0);
         ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,1024,600,frame));
         xSemaphoreTake(vsync,pdMS_TO_TICKS(100));

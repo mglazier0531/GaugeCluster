@@ -6,7 +6,15 @@ Animated dashboard prototype for the **Waveshare ESP32-S3-Touch-LCD-7B / ESP32-S
 
 The main reference is `reference/High-Contrast Cyan Automotive Dashboard UI.png`. Its metallic gauge faces, icons, and ticks are retained as a background asset. Numeric readouts and colored bands are rendered from the same engine values: RPM 0–7000, temperature 100–260 F, oil pressure 0–100 PSI, fuel 0–100%, and voltage 10–16 V. The bands fill and drain with the values; unfilled sections are dark and red warning sections brighten only when reached. White ticks and chrome remain visible. Temperature, oil, and voltage use measured tick positions from the artwork, including its nonuniform temperature scale. The generator also saves empty, half, and full band previews in `assets/` for visual verification.
 
-The second image is reserved for future selectable gauges. This version is a visual demo: all engine readings are simulated, navigation and status icons are reference artwork, touch/settings are not implemented, and no NMEA 2000 traffic is read or transmitted. There is no on-screen demo label; the dashboard extends into the reclaimed bottom space. RPM values below 1000 omit the thousands separator, and speed is centered vertically within the top bar using the visible glyph bounds.
+The second image is reserved for future selectable gauges. This version uses simulated engine readings; navigation and status icons are reference artwork, and no NMEA 2000 traffic is read or transmitted. Touch controls the settings popup through the upper-right gear. There is no on-screen demo label; the dashboard extends into the reclaimed bottom space. RPM values below 1000 omit the thousands separator, and speed is centered vertically within the top bar using the visible glyph bounds.
+
+## Display settings
+
+Tap the upper-right gear to open settings. Drag the backlight slider from 5% to 100%; the hardware brightness changes while dragging. Tap **NIGHT MODE** to switch the entire dashboard, moving bands, readouts, icons, and settings popup between cyan/day and muted amber/night colors. Night mode initially uses 25% backlight; day mode initially uses 100%. Each mode remembers its own brightness. Preferences are saved to NVS on slider release or mode change and restored at startup. Tap **X**, the gear again, or outside the popup to close it.
+
+The GT911 is reset through EXIO1 with GPIO4 selecting its I2C address. Touch is polled at 20 ms on the existing GPIO8/GPIO9 bus, with a queue separating input from rendering. The backlight uses Waveshare's inverted IO-extension PWM (`100 - brightness`); the 5% minimum keeps the controls visible. If touch initialization fails, the dashboard continues and reports the fault on UART.
+
+Generated previews: [day settings](assets/settings-day-preview.png), [night settings](assets/settings-night-preview.png), and [night dashboard](assets/dashboard-night-preview.png).
 
 ## Build and flash
 
