@@ -283,3 +283,6 @@ for night,brightness in [(False,100),(True,25)]:
         draw_value(popup,value,cx,int(cy/Y_SCALE),height,maxwidth,True)
     if night: popup=night_image(popup)
     popup.save(ROOT/f'assets/settings-{"night" if night else "day"}-preview.png')
+
+from selectable_assets import generate_selectable_assets
+generate_selectable_assets(ROOT,night_image)
