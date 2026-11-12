@@ -21,26 +21,30 @@ static void pixel(int x,int y,uint16_t c) {
     if(x>=0 && x<1024 && y>=0 && y<600) frame[y*1024+x]=c;
 }
 static void restore(int x0,int y0,int x1,int y1) {
+    y0=int(y0*dashboard_y_scale); y1=int(y1*dashboard_y_scale);
     for(int y=y0;y<y1;y++) {
         if(y<0 || y>=600) continue;
         int left=x0<0?0:x0, right=x1>1024?1024:x1;
         if(right>left) memcpy(frame+y*1024+left,dashboard_background+y*1024+left,(right-left)*2);
     }
 }
-static void text(const char* str,int cx,int top,int height,int maxwidth) {
+static void text(const char* str,int cx,int top,int height,int maxwidth,bool center_vertical=false) {
     float scale=height/100.0f;
     int sum=0;
     for(const char* p=str;*p;p++) { const char* q=strchr(font_chars,*p); if(q) sum+=font_widths[q-font_chars]; }
     if(sum*scale>maxwidth) scale=float(maxwidth)/sum;
+    // Arial atlas visible glyph bounds are y=19..92; center the actual ink,
+    // accounting for width fitting (one- and two-digit speeds differ in width).
+    if(center_vertical) top-=int(55.5f*scale);
     int left=cx-int(sum*scale)/2;
     const int stride=96*(sizeof(font_chars)-1);
     for(const char* p=str;*p;p++) {
         const char* q=strchr(font_chars,*p); if(!q) continue;
         int index=q-font_chars;
-        for(int y=0;y<int(120*scale);y++) for(int x=0;x<int(96*scale);x++) {
-            int sx=int(x/scale), sy=int(y/scale);
+        for(int y=0;y<int(120*scale*dashboard_y_scale);y++) for(int x=0;x<int(96*scale);x++) {
+            int sx=int(x/scale), sy=int(y/(scale*dashboard_y_scale));
             unsigned a=font_alpha[sy*stride+index*96+sx];
-            int dx=left+x,dy=top+y;
+            int dx=left+x,dy=int(top*dashboard_y_scale)+y;
             if(!a || dx<0 || dx>=1024 || dy<0 || dy>=600) continue;
             uint16_t bg=frame[dy*1024+dx];
             unsigned r=(((bg>>11)&31)*(255-a)+31*a)/255;
@@ -71,12 +75,15 @@ static void render(const EngineData& d) {
         {169,515,321,558},{474,515,635,558}};
     for(auto& a:areas) restore(a[0],a[1],a[2],a[3]);
     char s[40];
-    snprintf(s,sizeof(s),"%d,%03d",int(d.rpm)/1000,int(d.rpm)%1000); text(s,511,250,76,226);
+    int rpm=int(d.rpm);
+    if(rpm<1000) snprintf(s,sizeof(s),"%d",rpm);
+    else snprintf(s,sizeof(s),"%d,%03d",rpm/1000,rpm%1000);
+    text(s,511,250,76,226);
     snprintf(s,sizeof(s),"%.0f",d.temperature); text(s,175,186,43,80); text("F",224,194,24,20);
     snprintf(s,sizeof(s),"%.0f",d.oil); text(s,171,382,43,70); text("PSI",216,397,21,40);
     snprintf(s,sizeof(s),"%.0f%%",d.fuel); text(s,841,168,45,114);
     snprintf(s,sizeof(s),"%.1f",d.voltage); text(s,829,382,43,99); text("V",889,399,24,24);
-    snprintf(s,sizeof(s),"%.1f MPH",d.speed); text(s,760,21,42,160);
+    snprintf(s,sizeof(s),"%.1f MPH",d.speed); text(s,760,48,42,160,true);
     snprintf(s,sizeof(s),"%.1f h",d.hours); text(s,243,515,35,142);
     snprintf(s,sizeof(s),"%.1f GPH",d.flow); text(s,554,515,35,150);
     band(0,d.rpm/7000);
@@ -84,7 +91,6 @@ static void render(const EngineData& d) {
     band(2,d.oil/100);
     band(3,d.fuel/100);
     band(4,(d.voltage-10)/6);
-    text("DEMO",512,571,14,80);
 }
 extern "C" void app_main() {
     printf("GaugeCluster: 1024x600 ANIMATED DEMO; NMEA2000 disabled\n");

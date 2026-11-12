@@ -6,7 +6,7 @@ Animated dashboard prototype for the **Waveshare ESP32-S3-Touch-LCD-7B / ESP32-S
 
 The main reference is `reference/High-Contrast Cyan Automotive Dashboard UI.png`. Its metallic gauge faces, icons, and ticks are retained as a background asset. Numeric readouts and colored bands are rendered from the same engine values: RPM 0–7000, temperature 100–260 F, oil pressure 0–100 PSI, fuel 0–100%, and voltage 10–16 V. The bands fill and drain with the values; unfilled sections are dark and red warning sections brighten only when reached. White ticks and chrome remain visible. Temperature, oil, and voltage use measured tick positions from the artwork, including its nonuniform temperature scale. The generator also saves empty, half, and full band previews in `assets/` for visual verification.
 
-The second image is reserved for future selectable gauges. This version is a visual demo: all engine readings are simulated, navigation and status icons are reference artwork, touch/settings are not implemented, and no NMEA 2000 traffic is read or transmitted. A DEMO label is shown beneath the dashboard.
+The second image is reserved for future selectable gauges. This version is a visual demo: all engine readings are simulated, navigation and status icons are reference artwork, touch/settings are not implemented, and no NMEA 2000 traffic is read or transmitted. There is no on-screen demo label; the dashboard extends into the reclaimed bottom space. RPM values below 1000 omit the thousands separator, and speed is centered vertically within the top bar using the visible glyph bounds.
 
 ## Build and flash
 
@@ -22,7 +22,7 @@ The pinned PlatformIO Espressif32 platform installs ESP-IDF and the compiler aut
 
 ## Assets and driver provenance
 
-To regenerate assets, install Pillow (`python -m pip install Pillow`) and run `python tools/generate_assets.py`. The generator uses Windows Arial Bold Italic for its rasterized numeric font; generated assets are committed so ordinary firmware builds need no image tools or fonts. Original reference files are preserved unchanged. Layout is fitted proportionally to the screen.
+To regenerate assets, install Pillow (`python -m pip install Pillow`) and run `python tools/generate_assets.py`. The generator uses Windows Arial Bold Italic for its rasterized numeric font; generated assets are committed so ordinary firmware builds need no image tools or fonts. Original reference files are preserved unchanged. The original logical layout's first 570 rows are expanded to 600 physical rows, extending the bottom status bar to the screen edge. Background, text, restore regions, and band masks use the same vertical mapping.
 
 The `src/i2c.*`, `src/io_extension.*`, and `src/rgb_lcd_port.*` hardware drivers come from [Waveshare's official 06_LCD example](https://github.com/waveshareteam/ESP32-S3-Touch-LCD-7B/tree/master/examples/Arduino/examples/06_LCD), upstream commit `c652c902db607f7ffb376257393cfd7657aa6428`. Their license is preserved in `vendor/WAVESHARE-LICENSE`. See [board documentation](https://docs.waveshare.com/ESP32-S3-Touch-LCD-7B).
 

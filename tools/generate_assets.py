@@ -26,7 +26,8 @@ scale = min(1024/w, 600/h)
 size = (round(w*scale), round(h*scale))
 background = Image.new('RGB', (1024,600))
 background.paste(image.resize(size, Image.Resampling.LANCZOS), ((1024-size[0])//2,(600-size[1])//2))
-background.save(ROOT/'assets/dashboard-background.png')
+# Reclaim the former bottom demo-label area for the dashboard itself.
+Y_SCALE = 600 / 570
 
 # The reference contains a baked-in band. Extract its colored/gray track pixels
 # while protecting white tick marks and the surrounding chrome. Store angle and
@@ -85,6 +86,18 @@ for name,cx,cy,rx,ry,start,sweep in gauges:
             bands.append((y*1024+x,round(scale_fraction(name,angle+start,start,sweep)*65535),pack(active),pack(inactive)))
     band_ranges.append(len(bands))
 
+expanded=[]
+expanded_ranges=[0]
+for i in range(5):
+    for offset,threshold,active,inactive in bands[band_ranges[i]:band_ranges[i+1]]:
+        x,y=offset%1024,offset//1024
+        for screen_y in range(int(y*Y_SCALE),min(600,int((y+1)*Y_SCALE))):
+            expanded.append((screen_y*1024+x,threshold,active,inactive))
+    expanded_ranges.append(len(expanded))
+bands,band_ranges=expanded,expanded_ranges
+background=background.crop((0,0,1024,570)).resize((1024,600),Image.Resampling.LANCZOS)
+background.save(ROOT/'assets/dashboard-background.png')
+
 def array(f, name, data, ctype):
     f.write(f'const {ctype} {name}[] = {{\n')
     for i in range(0,len(data),24):
@@ -117,6 +130,7 @@ with (ROOT/'include/dashboard_assets.h').open('w') as f:
     f.write(f'constexpr char font_chars[] = "{chars}";\n')
     f.write('struct BandPixel { uint32_t offset; uint16_t threshold, active, inactive; };\n')
     f.write('extern const BandPixel band_pixels[];\nextern const uint32_t band_ranges[];\n')
+    f.write('constexpr float dashboard_y_scale = 600.0f / 570.0f;\n')
 print('Generated 1024x600 background and font atlas')
 
 preview = background.copy()
@@ -135,18 +149,19 @@ draw = ImageDraw.Draw(preview)
 readouts = [('3,450',511,250,76,226),('176',175,186,43,80),('F',224,194,24,20),
     ('58',171,382,43,70),('PSI',216,397,21,40),('72%',841,168,45,114),
     ('13.8',829,382,43,99),('V',889,399,24,24),('32.4 MPH',760,21,42,160),
-    ('487.6 h',243,515,35,142),('12.4 GPH',554,515,35,150),
-    ('DEMO',512,571,14,80)]
+    ('487.6 h',243,515,35,142),('12.4 GPH',554,515,35,150)]
 for value,cx,top,height,maxwidth in readouts:
     width=sum(widths[chars.index(c)] for c in value)
     factor=min(height/100,maxwidth/width)
+    if value.endswith('MPH'):
+        top=48-int(55.5*factor)
     left=cx-int(width*factor)//2
     for ch in value:
         index=chars.index(ch)
-        for y in range(int(120*factor)):
+        for y in range(int(120*factor*Y_SCALE)):
             for x in range(int(96*factor)):
-                a=atlas.getpixel((index*96+int(x/factor),int(y/factor)))
-                dx,dy=left+x,top+y
+                a=atlas.getpixel((index*96+int(x/factor),int(y/(factor*Y_SCALE))))
+                dx,dy=left+x,int(top*Y_SCALE)+y
                 if a and 0<=dx<1024 and 0<=dy<600:
                     bg=preview.getpixel((dx,dy))
                     preview.putpixel((dx,dy),tuple((v*(255-a)+255*a)//255 for v in bg))
