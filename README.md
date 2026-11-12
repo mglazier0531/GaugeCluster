@@ -40,7 +40,7 @@ With the demo running and the serial port free, `python tools/check_alarm_runtim
 
 ## Alerts for gauges not displayed
 
-All ten readings are monitored regardless of the current layout. An alert from any type absent from all five positions opens a **HIDDEN GAUGE ALERTS** popup with the gauge names and live readings. Critical alerts flash red; warnings flash yellow (amber at night). The border, heading, and critical rows pulse once per second while the values remain readable. Multiple hidden alerts share one popup, with critical conditions listed first. All nine possible hidden types fit without scrolling, even when one gauge is duplicated in all five positions.
+All ten readings are monitored regardless of the current layout. An alert from any type absent from all five positions opens a **GAUGE ALERTS** popup with the gauge names and live readings. Critical alerts flash red; warnings flash yellow (amber at night). The border, heading, and critical rows pulse once per second while the values remain readable. Multiple hidden alerts share one popup, with critical conditions listed first. All nine possible hidden types fit without scrolling, even when one gauge is duplicated in all five positions.
 
 Tap **ACKNOWLEDGE** to close the popup for the current episodes. A new hidden alert, a recovered alert returning, or a warning escalating to critical opens it again. The popup closes automatically when no unacknowledged hidden condition remains, including when an alerted type is placed on the dashboard. Acknowledgement does not clear the underlying condition or stop a displayed gauge from flashing. It resets at restart. The alert popup takes priority over settings or gauge selection; acknowledging it returns to the previous popup.
 

@@ -280,7 +280,7 @@ static void hidden_alert_popup(const float (&values)[gauge_count]) {
     uint16_t color=hidden_alerts.critical_mask?0xf800:0xffe0;
     rounded_rect(215,105,809,505,18,flash?color:0x4208);
     rounded_rect(219,109,805,501,14,0x0862);
-    ui_text("HIDDEN GAUGE ALERTS",512,140,30,540,flash?color:0xffff);
+    ui_text("GAUGE ALERTS",512,140,30,540,flash?color:0xffff);
     ui_text("GAUGES NOT CURRENTLY DISPLAYED",512,173,17,540);
     unsigned row=0;
     for(int severity=2;severity>=1;severity--) for(unsigned i=0;i<gauge_count;i++) {

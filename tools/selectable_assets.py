@@ -161,7 +161,7 @@ def generate_hidden_alert_previews(root):
         red=(255,0,0); ink=red if flash else 'white'
         d.rounded_rectangle((215,105,808,504),18,fill=red if flash else (66,65,66))
         d.rounded_rectangle((219,109,804,500),14,fill=(8,12,16))
-        fit_text(d,(512,140),'HIDDEN GAUGE ALERTS',30,540,ink)
+        fit_text(d,(512,140),'GAUGE ALERTS',30,540,ink)
         fit_text(d,(512,173),'GAUGES NOT CURRENTLY DISPLAYED',17,540)
         for row,(name,value) in enumerate(rows):
             fit_text(d,(415,209+row*25),name,20,360,ink)
