@@ -7,3 +7,4 @@ struct BandPixel { uint32_t offset; uint16_t threshold, active, inactive; };
 extern const BandPixel band_pixels[];
 extern const uint32_t band_ranges[];
 constexpr float dashboard_y_scale = 600.0f / 570.0f;
+extern const uint32_t highlight_pixels[], highlight_ranges[];

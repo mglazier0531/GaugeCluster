@@ -6,6 +6,7 @@
 #include "touch_input.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "gauge_limits.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -80,8 +81,8 @@ static void restore(int x0,int y0,int x1,int y1) {
         if(right>left) memcpy(frame+y*1024+left,background+y*1024+left,(right-left)*2);
     }
 }
-static void text(const char* str,int cx,int top,int height,int maxwidth,bool center_vertical=false) {
-    uint16_t ink=themed(0xffff);
+static void text(const char* str,int cx,int top,int height,int maxwidth,bool center_vertical=false,uint16_t color=0xffff) {
+    uint16_t ink=themed(color);
     float scale=height/100.0f;
     int sum=0;
     for(const char* p=str;*p;p++) { const char* q=strchr(font_chars,*p); if(q) sum+=font_widths[q-font_chars]; }
@@ -108,11 +109,26 @@ static void text(const char* str,int cx,int top,int height,int maxwidth,bool cen
         left+=int(font_widths[index]*scale);
     }
 }
-static void band(unsigned gauge,float fraction) {
+static uint16_t alert_ink(Alert alert,bool flash_on) {
+    if(alert==Alert::Warning) return 0xffe0;
+    if(alert==Alert::Critical && flash_on) return 0xf800;
+    return 0xffff;
+}
+static void band(unsigned gauge,float fraction,Alert alert,bool flash_on) {
     unsigned cutoff=unsigned(lroundf(65535*fminf(1,fmaxf(0,fraction))));
     for(unsigned i=band_ranges[gauge];i<band_ranges[gauge+1];i++) {
         const auto& p=band_pixels[i];
-        frame[p.offset]=themed((cutoff>0 && p.threshold<=cutoff)?p.active:p.inactive);
+        bool filled=cutoff>0 && p.threshold<=cutoff;
+        uint16_t color=filled?p.active:p.inactive;
+        if(alert==Alert::Warning) color=filled?0xffe0:0x39a0;
+        if(alert==Alert::Critical && flash_on) color=filled?0xf800:0x9800;
+        frame[p.offset]=themed(color);
+    }
+    bool highlight=alert==Alert::Warning || (alert==Alert::Critical && flash_on);
+    uint16_t color=themed(alert==Alert::Warning?0xffe0:0xf800);
+    for(unsigned i=highlight_ranges[gauge];i<highlight_ranges[gauge+1];i++) {
+        unsigned offset=highlight_pixels[i];
+        frame[offset]=highlight?color:background[offset];
     }
 }
 static void rounded_rect(int l,int t,int r,int b,int radius,uint16_t color) {
@@ -148,11 +164,27 @@ static void settings_popup() {
 }
 static EngineData demo(float t) {
     float wave=0.5f-0.5f*cosf(t*0.28f);
-    return {800+4400*wave,176+6*sinf(t*.12f),30+35*wave,
+    EngineData data={800+4200*wave,176+6*sinf(t*.12f),30+35*wave,
             72+2*sinf(t*.04f),13.8f+.25f*sinf(t*.3f),
             3+42*wave,487.6f+t/3600,1.2f+18*wave};
+    // 84-second cycle demonstrates every condition and recovery, without hiding
+    // the regular RPM sweep. Each scenario ramps in/out over two seconds.
+    float cycle=fmodf(t,84.0f),within=fmodf(cycle,12.0f);
+    int scenario=int(cycle/12);
+    float blend=fminf(1.0f,fminf(within/2,(12-within)/2));
+    if(scenario==1) data.temperature+=(210-data.temperature)*blend;
+    if(scenario==2) data.oil+=(10-data.oil)*blend;
+    if(scenario==3) data.fuel+=(16-data.fuel)*blend;
+    if(scenario==4) data.fuel+=(7-data.fuel)*blend;
+    if(scenario==5) data.voltage+=(9.5f-data.voltage)*blend;
+    return data;
 }
 static void render(const EngineData& d) {
+    bool flash_on=(esp_timer_get_time()/500000)%2==0;
+    Alert alerts[]={gauge_alert(Gauge::Rpm,d.rpm),gauge_alert(Gauge::Temperature,d.temperature),
+        gauge_alert(Gauge::Oil,d.oil),gauge_alert(Gauge::Fuel,d.fuel),gauge_alert(Gauge::Voltage,d.voltage)};
+    uint16_t colors[5];
+    for(unsigned i=0;i<5;i++) colors[i]=alert_ink(alerts[i],flash_on);
     // Only restore changing regions; full-frame flash-to-PSRAM copies compete with LCD DMA.
     const int areas[][4]={{390,250,640,345},{135,186,240,238},{140,382,240,433},
         {780,168,910,222},{775,382,914,434},{676,21,848,76},
@@ -162,19 +194,19 @@ static void render(const EngineData& d) {
     int rpm=int(d.rpm);
     if(rpm<1000) snprintf(s,sizeof(s),"%d",rpm);
     else snprintf(s,sizeof(s),"%d,%03d",rpm/1000,rpm%1000);
-    text(s,511,250,76,226);
-    snprintf(s,sizeof(s),"%.0f",d.temperature); text(s,175,186,43,80); text("F",224,194,24,20);
-    snprintf(s,sizeof(s),"%.0f",d.oil); text(s,171,382,43,70); text("PSI",216,397,21,40);
-    snprintf(s,sizeof(s),"%.0f%%",d.fuel); text(s,841,168,45,114);
-    snprintf(s,sizeof(s),"%.1f",d.voltage); text(s,829,382,43,99); text("V",889,399,24,24);
+    text(s,511,250,76,226,false,colors[0]);
+    snprintf(s,sizeof(s),"%.0f",d.temperature); text(s,175,186,43,80,false,colors[1]); text("F",224,194,24,20,false,colors[1]);
+    snprintf(s,sizeof(s),"%.0f",d.oil); text(s,171,382,43,70,false,colors[2]); text("PSI",216,397,21,40,false,colors[2]);
+    snprintf(s,sizeof(s),"%.0f%%",d.fuel); text(s,841,168,45,114,false,colors[3]);
+    snprintf(s,sizeof(s),"%.1f",d.voltage); text(s,829,382,43,99,false,colors[4]); text("V",889,399,24,24,false,colors[4]);
     snprintf(s,sizeof(s),"%.1f MPH",d.speed); text(s,760,48,42,160,true);
     snprintf(s,sizeof(s),"%.1f h",d.hours); text(s,243,515,35,142);
     snprintf(s,sizeof(s),"%.1f GPH",d.flow); text(s,554,515,35,150);
-    band(0,d.rpm/7000);
-    band(1,(d.temperature-100)/160);
-    band(2,d.oil/100);
-    band(3,d.fuel/100);
-    band(4,(d.voltage-10)/6);
+    band(0,d.rpm/rpm_max,alerts[0],flash_on);
+    band(1,(d.temperature-100)/160,alerts[1],flash_on);
+    band(2,d.oil/100,alerts[2],flash_on);
+    band(3,d.fuel/100,alerts[3],flash_on);
+    band(4,(d.voltage-10)/6,alerts[4],flash_on);
 }
 extern "C" void app_main() {
     printf("GaugeCluster: 1024x600 ANIMATED DEMO; NMEA2000 disabled\n");
@@ -195,6 +227,7 @@ extern "C" void app_main() {
     memcpy(buffers1,background,1024*600*2);
     bool previous_open[2]={false,false},previous_night[2]={settings.night,settings.night};
     bool next=false;
+    Alert previous_alerts[5]={};
     for(unsigned n=0;;n++) {
         TouchSample touch;
         unsigned changes=0;
@@ -207,7 +240,17 @@ extern "C" void app_main() {
         if((previous_open[index] && !settings.open) || previous_night[index]!=settings.night)
             memcpy(frame,background,1024*600*2);
         previous_open[index]=settings.open; previous_night[index]=settings.night;
-        render(demo(esp_timer_get_time()/1000000.0f));
+        EngineData data=demo(esp_timer_get_time()/1000000.0f);
+        const float values[]={data.rpm,data.temperature,data.oil,data.fuel,data.voltage};
+        const char* names[]={"RPM","TEMP","OIL","FUEL","VOLTAGE"};
+        for(unsigned i=0;i<5;i++) {
+            Alert alert=gauge_alert(static_cast<Gauge>(i),values[i]);
+            if(alert!=previous_alerts[i]) {
+                ESP_LOGI("alarm","%s %s value=%.1f",names[i],alert==Alert::Critical?"CRITICAL":(alert==Alert::Warning?"WARNING":"CLEAR"),values[i]);
+                previous_alerts[i]=alert;
+            }
+        }
+        render(data);
         if(settings.open) settings_popup();
         xSemaphoreTake(vsync,0);
         ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,1024,600,frame));
